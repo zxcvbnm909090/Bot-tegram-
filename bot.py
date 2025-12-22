@@ -1,119 +1,132 @@
-import os
-import random
 import sqlite3
-import requests
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from apscheduler.schedulers.background import BackgroundScheduler
 
-# ===== CONFIG =====
-TOKEN = os.getenv("8269653015:AAGybShdzQSmYMRcL860_iXyg4NSSKupYqg")
-ADMIN_ID = 5504483293
+# ================== SETTINGS ==================
+TOKEN = "8269653015:AAGybShdzQSmYMRcL860_iXyg4NSSKupYqg"
+CHANNEL_USERNAME = "@AzkarChannel"   # قناة الاشتراك الإجباري
+ADMINS = [5504483293]                 # ID الأدمن
+# ==============================================
 
-# ===== DATABASE =====
-conn = sqlite3.connect("users.db", check_same_thread=False)
-cur = conn.cursor()
-cur.execute("""
-CREATE TABLE IF NOT EXISTS users (
-    chat_id INTEGER PRIMARY KEY,
-    subscribed INTEGER DEFAULT 1
-)
-""")
-conn.commit()
-
-def add_user(chat_id):
-    cur.execute(
-        "INSERT OR IGNORE INTO users (chat_id, subscribed) VALUES (?,1)",
-        (chat_id,)
-    )
-    conn.commit()
-
-def subscribe(chat_id):
-    cur.execute("UPDATE users SET subscribed=1 WHERE chat_id=?", (chat_id,))
-    conn.commit()
-
-def unsubscribe(chat_id):
-    cur.execute("UPDATE users SET subscribed=0 WHERE chat_id=?", (chat_id,))
-    conn.commit()
-
-def get_subscribed_users():
-    cur.execute("SELECT chat_id FROM users WHERE subscribed=1")
-    return [u[0] for u in cur.fetchall()]
-
-# ===== DATA =====
-azkar = [
-    "سبحان الله",
-    "الحمد لله",
-    "لا إله إلا الله",
-    "الله أكبر",
-    "لا حول ولا قوة إلا بالله"
+# ================== AZKAR ==================
+MORNING_AZKAR = [
+    "🌅 أصبحنا وأصبح الملك لله والحمد لله",
+    "اللهم بك أصبحنا وبك أمسينا وبك نحيا وبك نموت",
+    "رضيت بالله رباً وبالإسلام ديناً وبمحمد ﷺ نبياً",
+    "اللهم إني أسألك خير هذا اليوم فتحه ونصره ونوره"
 ]
 
-# ===== API =====
-def get_ayah():
-    r = requests.get("https://api.alquran.cloud/v1/ayah/random/ar", timeout=10)
-    d = r.json()["data"]
-    return f"📖 {d['text']}\n\n({d['surah']['name']})"
+EVENING_AZKAR = [
+    "🌙 أمسينا وأمسى الملك لله والحمد لله",
+    "اللهم بك أمسينا وبك أصبحنا وبك نحيا وبك نموت",
+    "أعوذ بكلمات الله التامات من شر ما خلق",
+    "اللهم إني أسألك خير هذه الليلة فتحها ونصرها ونورها"
+]
+# ============================================
 
-def get_hadith():
-    r = requests.get("https://api.hadith.gading.dev/books/muslim?range=1-300", timeout=10)
-    h = random.choice(r.json()["data"]["hadiths"])
-    return f"📜 {h['arab']}"
+# ================= DATABASE =================
+conn = sqlite3.connect("users.db", check_same_thread=False)
+cur = conn.cursor()
+cur.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY)")
+conn.commit()
 
-# ===== KEYBOARD =====
-def main_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📿 ذكر", callback_data="zekr")],
-        [InlineKeyboardButton("📖 آية", callback_data="ayah")],
-        [InlineKeyboardButton("📜 حديث", callback_data="hadith")],
-        [
-            InlineKeyboardButton("🔔 اشتراك", callback_data="sub"),
-            InlineKeyboardButton("🔕 إلغاء", callback_data="unsub")
-        ]
-    ])
+def add_user(user_id):
+    cur.execute("INSERT OR IGNORE INTO users VALUES (?)", (user_id,))
+    conn.commit()
 
-# ===== HANDLERS =====
+def get_users():
+    cur.execute("SELECT user_id FROM users")
+    return [u[0] for u in cur.fetchall()]
+# ============================================
+
+# ================= CHECK SUB =================
+async def is_subscribed(bot, user_id):
+    try:
+        member = await bot.get_chat_member(CHANNEL_USERNAME, user_id)
+        return member.status in ["member", "administrator", "creator"]
+    except:
+        return False
+# ============================================
+
+# ================= START =====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    add_user(update.effective_chat.id)
-    await update.message.reply_text(
-        "🕌 مرحبًا بك في بوت الأذكار",
-        reply_markup=main_keyboard()
-    )
+    user_id = update.effective_user.id
 
-async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_subscribed(context.bot, user_id):
+        keyboard = [
+            [InlineKeyboardButton("📢 اشترك في القناة", url=f"https://t.me/{CHANNEL_USERNAME[1:]}")],
+            [InlineKeyboardButton("✅ تحققت من الاشتراك", callback_data="check")]
+        ]
+        await update.message.reply_text(
+            "🚫 لا يمكنك استخدام البوت قبل الاشتراك في القناة",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    add_user(user_id)
+    await update.message.reply_text(
+        "🌿 مرحباً بك في بوت أذكار الصباح والمساء\n"
+        "سيتم إرسال الأذكار تلقائيًا يومياً بإذن الله 🤍"
+    )
+# ============================================
+
+# ================= CALLBACK ==================
+async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    if query.data == "zekr":
-        text = random.choice(azkar)
-    elif query.data == "ayah":
-        text = get_ayah()
-    elif query.data == "hadith":
-        text = get_hadith()
-    elif query.data == "sub":
-        subscribe(query.message.chat.id)
-        text = "✅ تم تفعيل الاشتراك"
-    elif query.data == "unsub":
-        unsubscribe(query.message.chat.id)
-        text = "❌ تم إلغاء الاشتراك"
+    user_id = query.from_user.id
+    if await is_subscribed(context.bot, user_id):
+        add_user(user_id)
+        await query.edit_message_text("✅ تم التحقق بنجاح، مرحباً بك 🤍")
+    else:
+        await query.answer("❌ لم تشترك بعد", show_alert=True)
+# ============================================
 
-    await query.edit_message_text(text, reply_markup=main_keyboard())
+# ================= ADMIN =====================
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMINS:
+        return
 
-# ===== AUTO ZEKR =====
-async def hourly_zekr(context: ContextTypes.DEFAULT_TYPE):
-    zekr = random.choice(azkar)
-    for user in get_subscribed_users():
+    await update.message.reply_text(
+        f"👮 لوحة الأدمن\n"
+        f"👥 عدد المستخدمين: {len(get_users())}"
+    )
+# ============================================
+
+# ================= SEND AZKAR ================
+async def send_azkar(app, text):
+    for user in get_users():
         try:
-            await context.bot.send_message(user, f"⏰ {zekr}")
+            await app.bot.send_message(user, text)
         except:
             pass
 
-# ===== RUN =====
-app = Application.builder().token("8269653015:AAGybShdzQSmYMRcL860_iXyg4NSSKupYqg).build"()
+def morning_job(app):
+    text = "🌅 أذكار الصباح\n\n" + "\n".join(MORNING_AZKAR)
+    app.create_task(send_azkar(app, text))
 
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CallbackQueryHandler(buttons))
+def evening_job(app):
+    text = "🌙 أذكار المساء\n\n" + "\n".join(EVENING_AZKAR)
+    app.create_task(send_azkar(app, text))
+# ============================================
 
-app.job_queue.run_repeating(hourly_zekr, interval=3600, first=30)
+# ================= MAIN ======================
+def main():
+    app = ApplicationBuilder().token(TOKEN).build()
 
-print("Bot is running...")
-app.run_polling()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("admin", admin))
+    app.add_handler(CallbackQueryHandler(callback))
+
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(morning_job, "cron", hour=6, minute=0, args=[app])
+    scheduler.add_job(evening_job, "cron", hour=18, minute=0, args=[app])
+    scheduler.start()
+
+    print("✅ Bot is running...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
