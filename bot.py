@@ -108,7 +108,7 @@ async def hourly_zekr(context: ContextTypes.DEFAULT_TYPE):
             pass
 
 # ===== RUN =====
-app = Application.builder().token(TOKEN).build()
+app = Application.builder().token(8269653015:AAGybShdzQSmYMRcL860_iXyg4NSSKupYqg).build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CallbackQueryHandler(buttons))
